@@ -7,7 +7,7 @@ const HONOR_GLYPH = ['東', '南', '西', '北', '白', '發', '中'];
 export function tileHTML(t, { button = false, cls = '', attrs = '' } = {}) {
   const s = suitOf(t);
   const inner = s === 'z'
-    ? `<b aria-hidden="true">${t === 31 ? '' : HONOR_GLYPH[t - 27]}</b>`
+    ? `<b aria-hidden="true">${HONOR_GLYPH[t - 27]}</b>`
     : `<b aria-hidden="true">${numOf(t)}</b><i aria-hidden="true">${SUIT_GLYPH[s]}</i>`;
   const klass = `tile t-${s}${s === 'z' ? ` h${t - 26}` : ''}${cls ? ` ${cls}` : ''}`;
   if (button) {

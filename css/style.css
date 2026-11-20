@@ -70,13 +70,14 @@ button { font: inherit; color: inherit; }
   box-shadow: inset 0 -2px 0 var(--tile-edge), 0 2px 0 var(--tile-back), 0 3px 2px rgba(0,0,0,0.22);
   font-family: var(--glyph); color: #1B1B1B; position: relative;
 }
-.tile b { font-weight: 700; font-size: calc(var(--w) * 0.56); line-height: 1; }
-.tile i { font-style: normal; font-weight: 700; font-size: calc(var(--w) * 0.33); line-height: 1.15; }
+.tile b { font-weight: 700; font-size: calc(var(--w) * 0.54); line-height: 1; }
+/* 작은 패에서도 萬·筒·索이 뭉개지지 않게 최소 크기를 둔다 */
+.tile i { font-style: normal; font-weight: 700; font-size: max(8.5px, calc(var(--w) * 0.34)); line-height: 1.1; }
 .t-m i { color: var(--man); }
 .t-p b, .t-p i { color: var(--pin); }
 .t-s b, .t-s i { color: var(--sou); }
 .t-z b { font-size: calc(var(--w) * 0.62); }
-.t-z.h5 b { width: 56%; height: 58%; border: 2px solid var(--pin); border-radius: 2px; }
+.t-z.h5 b { color: #7C93AE; }
 .t-z.h6 b { color: var(--sou); }
 .t-z.h7 b { color: var(--man); }
 .tile.back { background: var(--tile-back); box-shadow: inset 0 -2px 0 rgba(0,0,0,0.15); }
