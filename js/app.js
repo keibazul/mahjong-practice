@@ -603,7 +603,7 @@ async function showWin(win, g) {
         const ok = b.dataset.pick === right;
         if (ok) sfx.good(); else sfx.bad();
         observe(P.mastery, 'scoring', ok, 1);
-        if (!ok) addMistake({ skill: 'scoring', text: `${r.fu}부 ${r.han}판 ${dealerWin ? '친' : '자'} ${win.loser === null ? '쯔모' : '론'}: ${b.dataset.pick}라고 답함 → 정답 ${right}` });
+        if (!ok) addMistake({ skill: 'scoring', text: `${r.fu}부 ${r.han}판 ${dealerWin ? '친' : '자'} ${win.loser === null ? '쯔모' : '론'}: ${b.dataset.pick}이라고 답함 → 정답 ${right}` });
         save();
         sheet.querySelectorAll('[data-pick]').forEach((x) => {
           x.disabled = true;
@@ -684,7 +684,7 @@ function waitsQuiz(c13, answer) {
       const ok = picked.size === answer.length && answer.every((k) => picked.has(k));
       if (ok) sfx.good(); else sfx.bad();
       observe(P.mastery, 'waits', ok, 1);
-      if (!ok) addMistake({ skill: 'waits', text: `대기 ${namesOf([...picked].sort((a, b) => a - b))}라고 답함 → 정답 ${namesOf(answer)}`, hand: toString(c13) });
+      if (!ok) addMistake({ skill: 'waits', text: `대기 ${josa(namesOf([...picked].sort((a, b) => a - b)), '이라고', '라고')} 답함 → 정답 ${namesOf(answer)}`, hand: toString(c13) });
       save();
       sheet.querySelector('.picker').classList.add('done');
       sheet.querySelectorAll('[data-w]').forEach((b) => {
