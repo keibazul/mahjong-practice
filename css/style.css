@@ -287,6 +287,7 @@ button.tile[aria-pressed="true"] { transform: translateY(-10px); box-shadow: ins
 .list { list-style: none; padding: 0; margin: 10px 0 0; }
 .list li { border-top: 1px solid var(--line); padding: 10px 0; font-size: 15px; }
 .list .when { font-size: 13px; color: var(--ink-2); }
+.export { width: 100%; min-height: 180px; margin-top: 8px; font: 13px/1.5 var(--body); color: var(--ink); background: var(--card); border: 1.5px solid var(--line); border-radius: var(--radius); padding: 10px; }
 .link-btn { background: none; border: 0; padding: 0; color: var(--ink-2); text-decoration: underline; cursor: pointer; font-size: 14px; }
 
 @media (prefers-reduced-motion: reduce) {

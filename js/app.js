@@ -167,6 +167,22 @@ main.addEventListener('click', (e) => {
   const a = act.dataset.act;
   if (a === 'new') { startGame(null); location.hash = '#/play'; if (current() === 'play') renderTable(); }
   if (a === 'resume') { startGame(P.resume); location.hash = '#/play'; if (current() === 'play') renderTable(); }
+  if (a === 'export') {
+    const text = exportText();
+    const msg = document.getElementById('export-msg');
+    const box = document.getElementById('export-box');
+    const fallback = () => {
+      box.hidden = false;
+      box.value = text;
+      box.focus();
+      box.select();
+      msg.textContent = '아래 글을 길게 눌러 전체 선택한 뒤 복사해서 사부에게 붙여 넣어라.';
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(() => { msg.textContent = '복사했다. 대화창에 붙여 넣어라.'; sfx.good(); }, fallback);
+    } else fallback();
+    return;
+  }
   if (a === 'reset') {
     if (window.confirm('학습한 모델과 숙련도, 대국 기록을 모두 지울까?')) { P = reset(); P.settings.calls = true; renderMe(); }
   }
@@ -721,6 +737,27 @@ function furitenQuiz(c13, w, view, discarded, furiten) {
 }
 
 // ---------- 내 실력 ----------
+function exportText() {
+  const style = styleReport(P.model);
+  const games = P.games;
+  const pct = (x) => Math.round(x * 100);
+  const avg = games.length ? (games.reduce((a, g) => a + g.place, 0) / games.length).toFixed(2) : '-';
+  const places = [1, 2, 3, 4].map((k) => games.filter((g) => g.place === k).length).join('/');
+  const bySkill = {};
+  for (const m of P.mistakes) bySkill[m.skill] = (bySkill[m.skill] || 0) + 1;
+  return [
+    `[작사 도장 기록] ${new Date().toLocaleString('ko-KR')}`,
+    `대국 ${games.length}판 (1/2/3/4등 ${places}) · 평균 ${avg}위 · 진행한 국 ${P.hands}`,
+    `추정 실력 ${rankName(P)} · AI 강도 δ=${P.delta.toFixed(2)} (${strengthLabel(P.delta)})`,
+    `숙련도: ${Object.entries(SKILLS).map(([k, v]) => `${v.ko} ${pct(level(P.mastery[k]))}% (${P.mastery[k].n}회)`).join(' / ')}`,
+    `타패 모델: 학습 ${P.model.n}개 · 적중 ${P.model.agree === null ? '-' : pct(P.model.agree)}% · 일관성 ${pct(style.consistency)}%`,
+    `비중(100%=강한 AI): ${style.items.filter((f) => STYLE_HELP[f.key]).map((f) => `${STYLE_HELP[f.key].name} ${pct(f.ratio)}%`).join(' / ')}`,
+    `최근 대국: ${games.slice(0, 10).map((g) => `${g.place}등 ${g.score}`).join(', ') || '없음'}`,
+    `저장된 실수 ${P.mistakes.length}개 (${Object.entries(bySkill).map(([k, n]) => `${SKILLS[k] ? SKILLS[k].ko : k} ${n}`).join(', ') || '없음'})`,
+    ...P.mistakes.slice(0, 15).map((m) => `- [${SKILLS[m.skill] ? SKILLS[m.skill].ko : m.skill}] ${m.text}${m.hand ? ` | 손패 ${m.hand}` : ''}`),
+  ].join('\n');
+}
+
 const STYLE_HELP = {
   shanten: {
     name: '샹텐 유지',
@@ -780,6 +817,9 @@ function renderMe() {
       <div class="fact"><small>학습한 네 타패</small><b>${fmt(P.model.n)}개</b></div>
       <div class="fact"><small>모델이 네 타패를 맞힌 비율</small><b>${P.model.agree === null ? '–' : `${Math.round(P.model.agree * 100)}%`}</b></div>
     </div>
+    <div class="row block"><button type="button" class="btn primary" data-act="export">사부에게 보낼 기록 복사</button></div>
+    <p class="note" id="export-msg" aria-live="polite">대국 기록·숙련도·타패 성향·최근 실수를 글로 묶어 복사한다. 대화창에 붙여 넣으면 사부가 분석해 준다.</p>
+    <textarea id="export-box" class="export" readonly hidden></textarea>
   </section>
   <section class="panel">
     <h2>기술별 숙련도</h2>
