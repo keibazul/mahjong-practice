@@ -686,6 +686,51 @@ function furitenQuiz(c13, w, view, discarded, furiten) {
 }
 
 // ---------- 내 실력 ----------
+const STYLE_HELP = {
+  shanten: {
+    name: '샹텐 유지',
+    desc: '텐파이까지 남은 거리(샹텐)를 늘리는 패는 버리지 않으려는 정도다.',
+    low: '손을 뒤로 돌리는 타패가 잦은 편이다.',
+    high: '역이나 수비보다 속도만 보는 편이다.',
+  },
+  accept: {
+    name: '유효패 수',
+    desc: '버린 뒤 손을 한 걸음 나아가게 하는 패(유효패)가 가장 많이 남는 쪽을 고르는 정도다. 패효율 그 자체다.',
+    low: '받는 장수를 세지 않고 감으로 버리는 편이다.',
+    high: '효율만 보고 도라나 역이 될 패를 가볍게 버리는 편이다.',
+  },
+  danger: {
+    name: '위험 회피 · 텐파이 근처',
+    desc: '내 손이 텐파이나 일샹텐일 때, 리치했거나 많이 운 상대에게 쏘일 만한 패를 피하는 정도다.',
+    low: '좋은 손일 때도 위험한 패를 거침없이 내는 편이다.',
+    high: '이길 수 있는 손도 일찍 접는 편이다.',
+  },
+  fold: {
+    name: '위험 회피 · 손이 멀 때',
+    desc: '내 손이 2샹텐 이상으로 멀 때 리치를 받으면, 현물 같은 안전한 패로 접는 정도다. 수비의 핵심이다.',
+    low: '가망 없는 손으로 끝까지 밀다가 쏘이기 쉬운 편이다.',
+    high: '접기는 확실하지만, 너무 일찍 접어 기회를 놓치기도 한다.',
+  },
+  yakuhai: {
+    name: '역패 쌍 지키기',
+    desc: '백·발·중이나 내 바람·장의 바람 패를 2장 갖고 있을 때 버리지 않고 남기는 정도다. 한 장 더 오면(퐁) 바로 역이 된다.',
+    low: '역이 될 패를 쉽게 버리는 편이다.',
+    high: '역패 쌍에 매달려 효율을 잃는 편이다.',
+  },
+  dora: {
+    name: '도라 지키기',
+    desc: '도라(갖고 있으면 판수가 오르는 패)를 버리지 않으려는 정도다.',
+    low: '도라를 쉽게 버려 점수를 깎는 편이다.',
+    high: '도라에 매달려 손이 느려지는 편이다.',
+  },
+  isolated: {
+    name: '외톨이 끝패 먼저 버리기',
+    desc: '이웃 패가 없는 1·9 수패나 자패 한 장을 초반에 먼저 정리하는 정도다.',
+    low: '쓸모없는 끝패를 늦게까지 들고 있는 편이다.',
+    high: '자패를 너무 빨리 버려 역패나 나중의 안전패를 잃는 편이다.',
+  },
+};
+
 function renderMe() {
   const games = P.games;
   const avg = games.length ? (games.reduce((a, g) => a + g.place, 0) / games.length).toFixed(2) : '–';
@@ -708,10 +753,19 @@ function renderMe() {
   </section>
   <section class="panel">
     <h2>AI가 배운 네 타패 성향</h2>
-    <p class="lead">네가 버린 패마다 모델을 고친다. 검은 선은 강한 기준이다. 막대가 짧으면 그 요소를 덜 따지는 편이다.</p>
-    <ul class="style">${style.filter((f) => !['guestWind', 'tsumogiri'].includes(f.key)).map((f) => {
-      const pct = Math.max(0, Math.min(1.5, f.ratio)) / 1.5 * 100;
-      return `<li>${f.ko}<div class="pair"><span class="track"><i style="width:${pct}%"></i><span class="goal" style="left:${100 / 1.5}%"></span></span><span class="v">${Math.round(f.ratio * 100)}%</span></div></li>`;
+    <p class="lead">네가 패를 버릴 때마다, 그 순간 무엇을 중시했는지를 모델이 배운다. 상대 AI는 이 모델에서 출발해 강도만 조절한 것이다.</p>
+    ${P.model.n < 300 ? `<p class="note">아직 학습한 타패가 ${fmt(P.model.n)}개라, 진단 결과로 넣은 시작값에 가깝다. 8~10판(타패 500개쯤)을 두면 네 성향이 드러난다.</p>` : ''}
+    <div class="fact" style="margin-top:12px"><small>일관성</small><b>${Math.round(Math.min(1.5, style.consistency) * 100)}%</b>
+      <p class="desc">비슷한 상황에서 얼마나 같은 기준으로 고르는지다. 100%면 강한 AI만큼 확실하게 고르고, 낮을수록 고르는 패가 들쭉날쭉하다.</p></div>
+    <p class="note">아래 막대는 각 요소의 <b>비중</b>이다. 가운데 검은 선(100%)이 강한 AI의 비중이다. 선보다 짧으면 그 요소를 덜 따지고, 길면 더 따진다. 어느 쪽이든 선에서 멀수록 손해를 본다.</p>
+    <ul class="style">${style.items.filter((f) => STYLE_HELP[f.key]).map((f) => {
+      const h = STYLE_HELP[f.key];
+      const pct = Math.max(0, Math.min(2, f.ratio)) / 2 * 100;
+      const tag = f.ratio < 0.7 ? ['low', '덜 따진다'] : f.ratio > 1.3 ? ['high', '더 따진다'] : ['ok', '기준과 비슷'];
+      const warn = tag[0] === 'low' ? h.low : tag[0] === 'high' ? h.high : '';
+      return `<li><div class="head"><span>${h.name}</span><span class="tag ${tag[0]}">${tag[1]}</span></div>
+        <div class="pair"><span class="track"><i style="width:${pct}%"></i><span class="goal" style="left:50%"></span></span><span class="v">${Math.round(f.ratio * 100)}%</span></div>
+        <p class="desc">${h.desc}${warn ? ` <span class="warn">지금 너는 ${warn}</span>` : ''}</p></li>`;
     }).join('')}</ul>
   </section>
   <section class="panel">

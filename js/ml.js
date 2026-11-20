@@ -111,11 +111,18 @@ export function strengthLabel(delta) {
   return '너보다 약함';
 }
 
-// 모델이 배운 성향: 강한 정책 대비 비율
+// 모델이 배운 성향
+// - 비중: 네 가중치 전체에서 그 요소가 차지하는 몫을 강한 기준의 몫과 비교 (1 = 같은 비중)
+// - 일관성: 가중치 크기를 강한 AI와 비교. 클수록 같은 상황에서 같은 패를 고른다
 export function styleReport(model) {
-  return FEATURES.map((f, i) => ({
-    ...f,
-    you: model.theta[i],
-    ratio: STRONG[i] ? model.theta[i] / (SHARP * STRONG[i]) : 0,
-  }));
+  const norm = (v) => Math.sqrt(v.reduce((a, x) => a + x * x, 0)) || 1;
+  const nu = norm(model.theta);
+  const ns = norm(STRONG);
+  return {
+    consistency: nu / (SHARP * ns),
+    items: FEATURES.map((f, i) => ({
+      ...f,
+      ratio: STRONG[i] ? (model.theta[i] / nu) / (STRONG[i] / ns) : 0,
+    })),
+  };
 }

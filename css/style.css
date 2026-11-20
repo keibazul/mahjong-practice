@@ -273,6 +273,14 @@ button.tile[aria-pressed="true"] { transform: translateY(-10px); box-shadow: ins
 .style .track i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--pin); border-radius: 5px; }
 .style .track .goal { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); }
 .style .v { text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.style li { padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.style .head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; }
+.style .tag { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--line); color: var(--ink-2); }
+.style .tag.ok { background: var(--good-bg); color: var(--good); }
+.style .tag.low, .style .tag.high { background: var(--bad-bg); color: var(--bad); }
+.desc { font-size: 14px; color: var(--ink-2); line-height: 1.55; margin-top: 6px; }
+.desc .warn { color: var(--bad); }
+.fact .desc { margin-top: 4px; }
 .list { list-style: none; padding: 0; margin: 10px 0 0; }
 .list li { border-top: 1px solid var(--line); padding: 10px 0; font-size: 15px; }
 .list .when { font-size: 13px; color: var(--ink-2); }
