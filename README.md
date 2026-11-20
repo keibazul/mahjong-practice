@@ -70,4 +70,5 @@ npm test
 | `js/ai.js` | 특징 추출, 위험도, AI 선수 |
 | `js/ml.js` | 모방 학습, 숙련도, 강도 조절 |
 | `js/coach.js` | 채점, 문제 빈도, 배패 기울이기 |
+| `js/sound.js` | 효과음 (Web Audio로 합성, 음원 파일 없음) |
 | `js/app.js` | 화면 |

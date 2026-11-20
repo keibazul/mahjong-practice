@@ -12,17 +12,25 @@ import {
 import { load, save, reset, addMistake } from './store.js';
 import { waits as waitsOf, tileName, toString, parse, toList } from './engine.js';
 import { limitLabel, pointLabel } from './yaku.js';
+import { sfx, configure as configureSound, unlock as unlockSound } from './sound.js';
 
 const main = document.getElementById('main');
 const sheet = document.getElementById('sheet');
 let P = load();
 if (P.settings.calls === undefined) P.settings.calls = true;
+if (!P.settings.sound) P.settings.sound = 'mid';
+configureSound(P.settings.sound);
+// 모바일은 사용자가 화면을 처음 누를 때 소리를 열어야 한다
+document.addEventListener('pointerdown', unlockSound, { passive: true });
+document.addEventListener('keydown', unlockSound);
 let S = null; // 진행 중인 대국
 
 const NAMES = ['나', '작사 A', '작사 B', '작사 C'];
 const OFFSET = [0, -0.12, 0, 0.12];
 const SPEED = { fast: 120, normal: 420, slow: 800 };
 const WIND_GLYPH = ['東', '南', '西', '北'];
+const ICON_SOUND = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8.5 8.5 0 0 1 0 12"/></svg>';
+const ICON_MUTE = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9l5 6M22 9l-5 6"/></svg>';
 const wait = (ms) => new Promise((r) => { setTimeout(r, ms); });
 const rnd = Math.random;
 const fmt = (n) => n.toLocaleString('ko-KR');
@@ -117,6 +125,7 @@ function renderHome() {
       <div><p class="opt-label">사부의 질문</p>${segHTML('coach', [['many', '자주'], ['auto', '보통'], ['off', '끄기']])}</div>
       <div><p class="opt-label">진행 속도</p>${segHTML('speed', [['fast', '빠름'], ['normal', '보통'], ['slow', '느림']])}</div>
       <div><p class="opt-label">치·퐁·깡 기회 알림</p>${segHTML('calls', [['true', '알림'], ['false', '끄기']])}</div>
+      <div><p class="opt-label">효과음</p>${segHTML('sound', [['off', '끄기'], ['low', '작게'], ['mid', '보통'], ['high', '크게']])}</div>
     </div>
   </section>
 
@@ -128,6 +137,18 @@ function renderHome() {
 }
 
 main.addEventListener('click', (e) => {
+  const mute = e.target.closest('[data-sound]');
+  if (mute) {
+    const on = P.settings.sound !== 'off';
+    if (on) P.settings.soundLast = P.settings.sound;
+    P.settings.sound = on ? 'off' : (P.settings.soundLast || 'mid');
+    configureSound(P.settings.sound);
+    unlockSound();
+    if (!on) sfx.select();
+    save();
+    renderTable();
+    return;
+  }
   if (S && e.target.closest('.play')) { playClick(e); return; }
   const seg = e.target.closest('[data-set] button');
   if (seg) {
@@ -137,6 +158,7 @@ main.addEventListener('click', (e) => {
     if (key === 'calls') v = v === 'true';
     P.settings[key] = v;
     save();
+    if (key === 'sound') { configureSound(v); unlockSound(); sfx.discard(); }
     seg.parentElement.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === seg)));
     return;
   }
@@ -170,6 +192,7 @@ class Human {
     if (!opt.ron && !P.settings.calls) return Promise.resolve({ type: 'pass' });
     return new Promise((resolve) => {
       S.pending = { kind: 'call', view, opt, resolve };
+      sfx.alert();
       renderTable();
     });
   }
@@ -217,6 +240,8 @@ function renderPlayPage() {
 function say(tone, text, detail = '') {
   if (!S) return;
   S.msg = { tone, text, detail };
+  if (tone === 'good') sfx.good();
+  if (tone === 'bad') sfx.bad();
 }
 
 // ---------- 차례마다 사부가 보는 것 ----------
@@ -350,7 +375,7 @@ function playClick(e) {
     if (tileBtn.disabled) return;
     const id = Number(tileBtn.dataset.id);
     if (S.sel === id) humanDiscard(Number(tileBtn.dataset.k));
-    else { S.sel = id; renderTable(); }
+    else { S.sel = id; sfx.select(); renderTable(); }
     return;
   }
   const act = e.target.closest('[data-play]');
@@ -358,7 +383,7 @@ function playClick(e) {
   const a = act.dataset.play;
   if (p.kind === 'turn') {
     if (a === 'tsumo') humanTurnAction({ type: 'tsumo' });
-    if (a === 'riichi') { S.riichiMode = !S.riichiMode; S.sel = null; renderTable(); }
+    if (a === 'riichi') { S.riichiMode = !S.riichiMode; S.sel = null; sfx.select(); renderTable(); }
     if (a === 'ankan') humanTurnAction({ type: 'ankan', kind: Number(act.dataset.k) });
     if (a === 'kakan') humanTurnAction({ type: 'kakan', kind: Number(act.dataset.k) });
   } else {
@@ -381,9 +406,10 @@ async function onEvent(ev, g) {
       P.resume = g.snapshot();
       save();
       break;
-    case 'draw': S.active = ev.seat; break;
-    case 'discard': S.last = ev.tile; break;
-    case 'call': S.active = ev.seat; S.last = null; break;
+    case 'draw': S.active = ev.seat; if (ev.seat === 0) sfx.draw(); break;
+    case 'discard': S.last = ev.tile; if (ev.riichi) sfx.riichi(); else sfx.discard(); break;
+    case 'call': S.active = ev.seat; S.last = null; sfx.call(ev.callType === 'minkan' ? 'kan' : ev.callType); break;
+    case 'kan': sfx.call('kan'); break;
     case 'falseWin':
       if (ev.seat === 0) {
         const skill = ev.reason === 'noYaku' || ev.reason === 'notAgari' ? 'yaku' : 'furiten';
@@ -396,10 +422,14 @@ async function onEvent(ev, g) {
       break;
     case 'win':
       renderTable();
+      sfx.win(ev.win.seat === 0 ? 'me' : ev.win.loser === 0 ? 'dealtIn' : 'other');
+      await wait(450);
       await showWin(ev.win, g);
       break;
     case 'exhaustive':
       renderTable();
+      sfx.ryuukyoku();
+      await wait(300);
       await showExhaustive(ev.draw, g);
       break;
     case 'handEnd':
@@ -489,7 +519,7 @@ function renderTable() {
   main.innerHTML = `<section class="play">
     <div class="status">
       <span class="dora">도라 표시패 ${tilesRow(v.dora)}</span>
-      <span>AI ${strengthLabel(P.delta)}</span>
+      <span class="right"><span>AI ${strengthLabel(P.delta)}</span><button type="button" class="mute" data-sound aria-pressed="${P.settings.sound !== 'off'}" aria-label="${P.settings.sound !== 'off' ? '효과음 끄기' : '효과음 켜기'}">${P.settings.sound !== 'off' ? ICON_SOUND : ICON_MUTE}</button></span>
     </div>
     <div class="table" role="img" aria-label="${roundName(v)}, 남은 패 ${v.wallLeft}장">
       <div class="center"><div class="rn">${roundName(v)}</div><div class="wl">남은 패 ${v.wallLeft}</div><div class="sticks">${v.honba}본장 · 공탁 ${v.sticks}</div></div>
@@ -555,6 +585,7 @@ async function showWin(win, g) {
         <div class="choices">${all.map((c) => `<button type="button" class="choice" data-pick="${c}">${c}</button>`).join('')}</div><div id="after"></div></div>`);
       sheet.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => {
         const ok = b.dataset.pick === right;
+        if (ok) sfx.good(); else sfx.bad();
         observe(P.mastery, 'scoring', ok, 1);
         if (!ok) addMistake({ skill: 'scoring', text: `${r.fu}부 ${r.han}판 ${dealerWin ? '친' : '자'} ${win.loser === null ? '쯔모' : '론'}: ${b.dataset.pick}라고 답함 → 정답 ${right}` });
         save();
@@ -587,6 +618,7 @@ async function showGameEnd(result) {
   const place = result.order.indexOf(0) + 1;
   const d0 = S.deltaStart;
   afterGame(P, place);
+  sfx.gameEnd(place);
   P.games.unshift({ at: Date.now(), place, score: result.scores[0], rounds: S.game.rules.rounds });
   P.games = P.games.slice(0, 50);
   save();
@@ -628,11 +660,13 @@ function waitsQuiz(c13, answer) {
       const k = Number(b.dataset.w);
       if (picked.has(k)) picked.delete(k); else picked.add(k);
       b.setAttribute('aria-pressed', String(picked.has(k)));
+      sfx.select();
       sheet.querySelector('#err').textContent = '';
     }));
     sheet.querySelector('[data-check]').addEventListener('click', () => {
       if (!picked.size) { sheet.querySelector('#err').textContent = '대기패를 하나 이상 골라라.'; return; }
       const ok = picked.size === answer.length && answer.every((k) => picked.has(k));
+      if (ok) sfx.good(); else sfx.bad();
       observe(P.mastery, 'waits', ok, 1);
       if (!ok) addMistake({ skill: 'waits', text: `대기 ${namesOf([...picked].sort((a, b) => a - b))}라고 답함 → 정답 ${namesOf(answer)}`, hand: toString(c13) });
       save();
@@ -665,6 +699,7 @@ function furitenQuiz(c13, w, view, discarded, furiten) {
       <div id="after"></div>`);
     sheet.querySelectorAll('[data-f]').forEach((b) => b.addEventListener('click', () => {
       const ok = (b.dataset.f === 'yes') === furiten;
+      if (ok) sfx.good(); else sfx.bad();
       observe(P.mastery, 'furiten', ok, 1);
       if (!ok) addMistake({ skill: 'furiten', text: `후리텐 판단 틀림 (대기 ${namesOf(w)}, ${furiten ? '후리텐' : '후리텐 아님'})`, hand: toString(c13) });
       save();

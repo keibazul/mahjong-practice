@@ -13,7 +13,7 @@ export function blankProfile() {
     games: [],
     hands: 0,
     mistakes: [],
-    settings: { rounds: 1, coach: 'auto', speed: 'normal' },
+    settings: { rounds: 1, coach: 'auto', speed: 'normal', calls: true, sound: 'mid' },
   };
 }
 
