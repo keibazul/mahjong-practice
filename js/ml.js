@@ -53,10 +53,20 @@ export function predict(model, cands) {
 }
 
 // AI 한 명의 가중치
+// δ ≤ 1: 네 모델에서 강한 기준 쪽으로 옮겨 간다. δ > 1: 강한 기준을 더 단호하게(덜 흔들리게) 쓴다.
 export function aiTheta(model, delta) {
-  const th = model.theta;
-  if (delta >= 0) return th.map((w, i) => w + delta * (SHARP * STRONG[i] - w));
-  return th.map((w) => (1 + delta) * w);
+  const th = STRONG.map((_, i) => (model.theta[i] ?? PRIOR_THETA[i]));
+  if (delta < 0) return th.map((w) => (1 + delta) * w);
+  const d = Math.min(1, delta);
+  const sharpen = 1 + Math.max(0, delta - 1) * 2.5;
+  return th.map((w, i) => (w + d * (SHARP * STRONG[i] - w)) * sharpen);
+}
+
+// 특징이 늘어난 뒤에도 예전에 저장한 모델을 그대로 쓸 수 있게 채운다
+export function migrateModel(model) {
+  if (!model || !Array.isArray(model.theta)) return initModel();
+  while (model.theta.length < PRIOR_THETA.length) model.theta.push(PRIOR_THETA[model.theta.length]);
+  return model;
 }
 
 export function observe(mastery, skill, correct, weight = 1) {
@@ -76,7 +86,7 @@ export function weakest(mastery) {
 
 // 강도 조절
 export const DELTA_MIN = -0.6;
-export const DELTA_MAX = 1.0;
+export const DELTA_MAX = 1.3;
 const clampD = (d) => Math.max(DELTA_MIN, Math.min(DELTA_MAX, d));
 
 export function afterHand(profile, before, after) {
@@ -104,6 +114,7 @@ export function rankName(profile) {
 
 // AI 강도를 사람 말로
 export function strengthLabel(delta) {
+  if (delta >= 1.05) return '사부급 (최강)';
   if (delta >= 0.7) return '너보다 확실히 강함';
   if (delta >= 0.35) return '너보다 조금 강함';
   if (delta >= 0.05) return '너와 비슷';

@@ -1,7 +1,7 @@
 // AI: 버림패 후보마다 특징을 뽑고, 가중치(θ)로 점수를 매겨 고른다.
 // 같은 특징을 사람의 타패 학습(ml.js)에도 쓴다.
-import { shanten } from './engine.js';
-import { doraOf } from './yaku.js';
+import { shanten, waits as waitsOf } from './engine.js';
+import { doraOf, evaluateWin } from './yaku.js';
 import { countsOf, kindOf } from './game.js';
 
 export const FEATURES = [
@@ -14,10 +14,11 @@ export const FEATURES = [
   { key: 'isolated', ko: '고립 요구패 먼저' },
   { key: 'guestWind', ko: '손님풍 먼저' },
   { key: 'tsumogiri', ko: '쯔모기리 습관' },
+  { key: 'value', ko: '손 점수 키우기' },
 ];
 
 // 강한 기준 정책의 가중치
-export const STRONG = [4.0, 2.2, 1.0, 5.0, 0.8, 0.5, 0.35, 0.15, 0.02];
+export const STRONG = [4.0, 2.2, 1.0, 5.0, 0.8, 0.5, 0.35, 0.15, 0.02, 0.6];
 
 // 화면에 보이는 패 수 (자기 손 + 모든 버림패 + 울음 + 도라 표시패)
 export function visibleCounts(view) {
@@ -131,26 +132,144 @@ function isYakuhai(t, view) {
   return t >= 31 || t === view.seatWinds[view.seat] || t === view.roundWind;
 }
 
+const isSimple = (t) => t < 27 && t % 9 !== 0 && t % 9 !== 8;
+
+// 손의 점수 가능성 (대략의 판수)
+export function valueEstimate(c, view, closedHand, meldKinds, doraKinds) {
+  let han = 0;
+  for (const d of doraKinds) {
+    han += c[d];
+    for (const k of meldKinds) if (k === d) han += 1;
+  }
+  if (closedHand) han += 1; // 리치
+  const all = c.slice();
+  for (const k of meldKinds) all[k] += 1;
+  for (let k = 27; k < 34; k++) {
+    if (!isYakuhai(k, view)) continue;
+    const mult = (k === view.seatWinds[view.seat] ? 1 : 0) + (k === view.roundWind ? 1 : 0) + (k >= 31 ? 1 : 0);
+    if (all[k] >= 3) han += mult;
+    else if (c[k] === 2) han += 0.5 * mult;
+  }
+  const yaochuHand = c.reduce((a, n, t) => a + (isSimple(t) ? 0 : n), 0);
+  const yaochuMeld = meldKinds.some((k) => !isSimple(k));
+  if (!yaochuMeld) {
+    if (yaochuHand === 0) han += 1;
+    else if (yaochuHand <= 2) han += 0.4;
+  }
+  const suits = [0, 9, 18].map((b) => all.slice(b, b + 9).reduce((a, x) => a + x, 0));
+  const honors = all.slice(27).reduce((a, x) => a + x, 0);
+  const total = suits[0] + suits[1] + suits[2] + honors;
+  const main = Math.max(...suits);
+  const off = total - main - honors;
+  if (off === 0 && main >= 8) han += closedHand ? (honors ? 3 : 6) : (honors ? 2 : 5);
+  else if (off <= 2 && main >= 8) han += 0.6;
+  return han;
+}
+
+// 텐파이 손(3n+1장)의 대기: 남은 장수, 역 없는 대기·후리텐 반영
+function waitQuality(c, vis, ownSet, view, closedHand, meldObjs) {
+  const w = waitsOf(c);
+  let count = 0;
+  let kinds = 0;
+  for (const t of w) {
+    const left = Math.max(0, 4 - vis[t]);
+    if (!left) continue;
+    let ok = true;
+    if (!closedHand) {
+      c[t] += 1;
+      const r = evaluateWin({ closed: c, melds: meldObjs, winTile: t, tsumo: false, seatWind: view.seatWinds[view.seat], roundWind: view.roundWind, dora: [], ura: [] });
+      c[t] -= 1;
+      ok = Boolean(r && !r.noYaku);
+    }
+    if (ok) { count += left; kinds += 1; }
+  }
+  const furiten = w.some((t) => ownSet.has(t));
+  return { count: furiten ? count * 0.3 : count, kinds, furiten };
+}
+
 export function analyzeDiscards(view, opt = {}) {
   const c = countsOf(view.hand);
   const closedHand = view.melds[view.seat].every((m) => m.type === 'ankan');
   const { danger, per, vis } = dangerByKind(view);
   const threat = per.length > 0;
+  const riichiThreat = per.some((x) => x.threat >= 1);
   const doraKinds = view.dora.map(doraOf);
   const forbidden = opt.forbidden || [];
   const drawnKind = view.drawn !== null && view.drawn !== undefined ? kindOf(view.drawn) : -1;
+  const meldKinds = [];
+  for (const m of view.melds[view.seat]) for (const id of m.tiles) meldKinds.push(kindOf(id));
+  const meldObjs = view.melds[view.seat].map((m) => ({ type: m.type, tiles: m.tiles.map(kindOf) }));
+  const own = new Set(view.discards[view.seat].map((d) => kindOf(d.tile)));
+  const left = (u) => Math.max(0, 4 - vis[u]);
 
   const cands = [];
   for (let t = 0; t < 34; t++) {
     if (!c[t] || forbidden.includes(t)) continue;
     c[t]--;
     const a = acceptanceVisible(c, vis, closedHand);
+    const value = valueEstimate(c, view, closedHand, meldKinds, doraKinds);
+    let wait = null;
+    if (a.shanten === 0) {
+      const ownT = new Set(own);
+      ownT.add(t);
+      wait = waitQuality(c, vis, ownT, view, closedHand, meldObjs);
+    }
     c[t]++;
-    cands.push({ t, shanten: a.shanten, accept: a.count, tiles: a.tiles, danger: danger[t] });
+    cands.push({ t, shanten: a.shanten, accept: a.count, tiles: a.tiles, danger: danger[t], value, wait });
   }
   const minSh = Math.min(...cands.map((x) => x.shanten));
-  const maxAcc = Math.max(1, ...cands.filter((x) => x.shanten === minSh).map((x) => x.accept));
-  const far = minSh >= 2 ? 1 : minSh === 1 ? 0.5 : 0;
+
+  // 유효 효율: 텐파이면 실제로 날 수 있는 대기 장수, 일샹텐이면 받은 뒤 대기의 질까지
+  const best = cands.filter((x) => x.shanten === minSh);
+  if (minSh === 0) {
+    for (const x of best) x.eff = x.wait.count;
+  } else if (minSh === 1) {
+    const top = best.slice().sort((p, q) => q.accept - p.accept).slice(0, 5);
+    for (const x of best) x.eff = x.accept * 0.7;
+    for (const x of top) {
+      c[x.t]--;
+      const ownT = new Set(own);
+      ownT.add(x.t);
+      let eff = 0;
+      for (const u of x.tiles) {
+        const n = left(u);
+        if (!n) continue;
+        c[u]++;
+        let bw = 0;
+        for (let d = 0; d < 34; d++) {
+          if (!c[d]) continue;
+          c[d]--;
+          if (shanten(c, { chiitoi: closedHand }) === 0) {
+            const ownD = new Set(ownT);
+            ownD.add(d);
+            bw = Math.max(bw, waitQuality(c, vis, ownD, view, closedHand, meldObjs).count);
+          }
+          c[d]++;
+        }
+        c[u]--;
+        eff += n * (0.4 + 0.6 * Math.min(1, bw / 8));
+      }
+      c[x.t]++;
+      x.eff = eff;
+    }
+  } else {
+    for (const x of best) x.eff = x.accept;
+  }
+  for (const x of cands) if (x.eff === undefined) x.eff = 0;
+  const maxEff = Math.max(1e-6, ...best.map((x) => x.eff));
+  const maxAcc = Math.max(1, ...best.map((x) => x.accept));
+  const maxVal = Math.max(...cands.map((x) => x.value));
+
+  // 밀고 당기기: 접어야 하는 정도 (0 = 민다, 1 = 접는다)
+  let fold = 0;
+  if (riichiThreat) {
+    if (minSh >= 2) fold = 1;
+    else if (minSh === 1) fold = maxVal >= 3 ? 0.3 : maxVal >= 2 ? 0.7 : 1;
+    else if (maxEff >= 4 || maxVal >= 2.5) fold = 0;
+    else fold = maxEff >= 2 ? 0.5 : 1;
+  } else if (threat) {
+    fold = minSh >= 2 ? 0.7 : minSh === 1 ? 0.4 : 0;
+  }
 
   for (const x of cands) {
     const t = x.t;
@@ -158,20 +277,22 @@ export function analyzeDiscards(view, opt = {}) {
     const isolated = c[t] === 1 && (t >= 27 || ![-2, -1, 1, 2].some((d) => n + d >= 0 && n + d <= 8 && c[t + d] > 0));
     const yaochu = t >= 27 || n === 0 || n === 8;
     const dn = Math.min(1.3, x.danger / 0.12);
+    // 접을 때는 공격 쪽 요소(샹텐·효율·점수)의 무게를 줄인다
+    const atk = 1 - 0.85 * fold;
     x.phi = [
-      -(x.shanten - minSh),
-      x.shanten === minSh ? x.accept / maxAcc : 0,
+      -(x.shanten - minSh) * atk,
+      x.shanten === minSh ? (x.eff / maxEff) * atk : 0,
       threat ? -dn : 0,
-      threat ? -dn * far : 0,
+      threat ? -dn * fold : 0,
       isYakuhai(t, view) && c[t] >= 2 ? -1 : 0,
       -doraKinds.filter((d) => d === t).length,
       isolated && yaochu ? 1 : 0,
       t >= 27 && t <= 30 && !isYakuhai(t, view) && c[t] === 1 ? 1 : 0,
       t === drawnKind ? 1 : 0,
+      Math.max(-1.5, (x.value - maxVal) / 2) * atk,
     ];
   }
-  const riichiThreat = per.some((x) => x.threat >= 1);
-  return { cands, minSh, maxAcc, threat, riichiThreat, per, vis, closedHand };
+  return { cands, minSh, maxAcc, maxEff, maxVal, fold, threat, riichiThreat, per, vis, closedHand };
 }
 
 export const dot = (w, f) => w.reduce((s, x, i) => s + x * f[i], 0);
@@ -230,9 +351,20 @@ export function callPlan(view, opt) {
 
   if ((opt.pon || opt.minkan) && isYakuhai(t, view)) {
     const r = evalAfter([t, t], [t, t, t]);
-    if (r.best <= before) return { type: 'pon' };
+    if (r.best <= before && (!threatened || r.best === 0)) return { type: 'pon' };
   }
-  if (threatened && before >= 1) return { type: 'pass' };
+  if (threatened && before >= 1) {
+    // 리치를 받았으면 울어서 바로 텐파이가 될 때만
+    if (opt.pon) {
+      const r = evalAfter([t, t], [t, t, t]);
+      if (r.best === 0 && (hasYakuhaiMeld || r.simple || r.flush)) return { type: 'pon' };
+    }
+    for (const pair of opt.chi || []) {
+      const r = evalAfter(pair, [t, ...pair]);
+      if (r.best === 0 && (hasYakuhaiMeld || r.simple || r.flush)) return { type: 'chi', use: pair };
+    }
+    return { type: 'pass' };
+  }
   const yakuOk = (r) => hasYakuhaiMeld || r.simple || r.flush;
   if (opt.pon) {
     const r = evalAfter([t, t], [t, t, t]);
@@ -264,11 +396,16 @@ export class AIPlayer {
     for (const k of opt.ankan || []) if (k >= 27) return { type: 'ankan', kind: k };
     if (!threatened && (opt.kakan || []).length) return { type: 'kakan', kind: opt.kakan[0] };
 
-    const { cands } = analyzeDiscards(view, opt);
+    const an = analyzeDiscards(view, opt);
     const w = this.weights(view);
-    const probs = softmax(cands.map((x) => dot(w, x.phi)));
-    const pick = cands[sample(probs, this.rng)];
-    const riichi = (opt.riichi || []).includes(pick.t);
+    const probs = softmax(an.cands.map((x) => dot(w, x.phi)));
+    const pick = an.cands[sample(probs, this.rng)];
+    let riichi = (opt.riichi || []).includes(pick.t);
+    if (riichi && pick.wait) {
+      // 날 수 있는 대기가 없으면(후리텐 등) 리치하지 않는다. 리치를 받은 상황이면 좋은 대기나 높은 점수일 때만
+      if (pick.wait.count <= 0) riichi = false;
+      else if (an.riichiThreat && pick.wait.count < 4 && pick.value < 2.5) riichi = false;
+    }
     return { type: 'discard', tile: pick.t, riichi };
   }
 

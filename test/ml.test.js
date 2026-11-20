@@ -54,7 +54,7 @@ async function run(label, humanTheta, games, startDelta) {
 
 const games = Number(process.argv[2] || 30);
 // 유효패를 거의 안 세고, 수비를 안 하고, 자패부터 버리는 사람
-const sloppy = [3.0, 0.2, 0.0, 0.0, 0.3, 0.1, 1.5, 1.2, 0.6];
+const sloppy = [3.0, 0.2, 0.0, 0.0, 0.3, 0.1, 1.5, 1.2, 0.6, 0.1];
 // 강한 기준에 가까운 사람
 const sharp = STRONG.map((w) => w * 3);
 

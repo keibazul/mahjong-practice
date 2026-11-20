@@ -4,7 +4,7 @@ import { Game, mulberry32, kindOf, countsOf, roundName } from './game.js';
 import { AIPlayer, analyzeDiscards } from './ai.js';
 import {
   SKILLS, level, observe, updateModel, aiTheta, afterHand, afterGame,
-  rankName, strengthLabel, styleReport, weakest,
+  rankName, strengthLabel, styleReport, weakest, DELTA_MIN, DELTA_MAX,
 } from './ml.js';
 import {
   askProb, judgeEfficiency, judgeDefense, scoreChoices, makeDealShaper, LINES, pickLine, FALSE_WIN_TEXT,
@@ -222,7 +222,7 @@ function startGame(snapshot) {
   const human = new Human();
   const ais = [1, 2, 3].map((i) => new AIPlayer({
     name: NAMES[i], rng, think,
-    weights: () => aiTheta(P.model, Math.max(-0.6, Math.min(1, P.delta + OFFSET[i]))),
+    weights: () => aiTheta(P.model, Math.max(DELTA_MIN, Math.min(DELTA_MAX, P.delta + OFFSET[i]))),
   }));
   const rounds = snapshot ? snapshot.rules.rounds : P.settings.rounds;
   const game = new Game({
@@ -767,7 +767,7 @@ const STYLE_HELP = {
   },
   accept: {
     name: '유효패 수',
-    desc: '버린 뒤 손을 한 걸음 나아가게 하는 패(유효패)가 가장 많이 남는 쪽을 고르는 정도다. 패효율 그 자체다.',
+    desc: '버린 뒤 손을 한 걸음 나아가게 하는 패(유효패)가 많이 남는 쪽을 고르는 정도다. 일샹텐에서는 받은 뒤 대기가 좋아지는지까지 본다. 패효율 그 자체다.',
     low: '받는 장수를 세지 않고 감으로 버리는 편이다.',
     high: '효율만 보고 도라나 역이 될 패를 가볍게 버리는 편이다.',
   },
@@ -778,8 +778,8 @@ const STYLE_HELP = {
     high: '이길 수 있는 손도 일찍 접는 편이다.',
   },
   fold: {
-    name: '위험 회피 · 손이 멀 때',
-    desc: '내 손이 2샹텐 이상으로 멀 때 리치를 받으면, 현물 같은 안전한 패로 접는 정도다. 수비의 핵심이다.',
+    name: '위험 회피 · 밀 가치가 없을 때',
+    desc: '리치를 받았는데 내 손이 멀거나, 싸거나, 대기가 나쁠 때 현물 같은 안전한 패로 접는 정도다. 수비의 핵심이다.',
     low: '가망 없는 손으로 끝까지 밀다가 쏘이기 쉬운 편이다.',
     high: '접기는 확실하지만, 너무 일찍 접어 기회를 놓치기도 한다.',
   },
@@ -794,6 +794,12 @@ const STYLE_HELP = {
     desc: '도라(갖고 있으면 판수가 오르는 패)를 버리지 않으려는 정도다.',
     low: '도라를 쉽게 버려 점수를 깎는 편이다.',
     high: '도라에 매달려 손이 느려지는 편이다.',
+  },
+  value: {
+    name: '손 점수 키우기',
+    desc: '효율이 비슷하면 역(리치·탕야오·역패·혼일색)이나 도라가 살아남는 쪽을 고르는 정도다.',
+    low: '점수가 될 재료를 쉽게 버리는 편이다.',
+    high: '점수에 욕심을 내다 손이 느려지는 편이다.',
   },
   isolated: {
     name: '외톨이 끝패 먼저 버리기',

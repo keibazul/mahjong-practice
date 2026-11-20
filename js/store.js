@@ -1,5 +1,5 @@
 // 이 기기의 브라우저에 기록을 남긴다. 저장소를 못 쓰는 환경이면 메모리에만 둔다.
-import { initModel, initMastery } from './ml.js';
+import { initModel, initMastery, migrateModel } from './ml.js';
 
 const KEY = 'jaksa-dojo-v2';
 let mem = null;
@@ -25,6 +25,7 @@ export function load() {
       const p = JSON.parse(raw);
       const b = blankProfile();
       mem = { ...b, ...p, settings: { ...b.settings, ...(p.settings || {}) }, mastery: { ...b.mastery, ...(p.mastery || {}) } };
+      mem.model = migrateModel(mem.model);
     } else mem = blankProfile();
   } catch {
     mem = blankProfile();
