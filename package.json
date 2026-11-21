@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node test/engine.test.js && node test/yaku.test.js && node test/sim.test.js 20 && node test/chaos.test.js 100 && node test/ml.test.js 30",
+    "test": "node test/engine.test.js && node test/yaku.test.js && node test/sim.test.js 20 && node test/chaos.test.js 100 && node test/ml.test.js 30 && node test/quiz.test.js",
     "serve": "python3 -m http.server 8123"
   }
 }

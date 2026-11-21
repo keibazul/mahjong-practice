@@ -58,7 +58,8 @@ button { font: inherit; color: inherit; }
 }
 .brand { font-family: var(--display); font-size: 21px; text-decoration: none; letter-spacing: 0.02em; }
 .topnav { display: flex; gap: 2px; }
-.topnav a { text-decoration: none; font-size: 14px; padding: 6px 10px; border-radius: 999px; color: var(--on-felt-2); }
+.topnav a { text-decoration: none; font-size: 14px; padding: 6px 8px; border-radius: 999px; color: var(--on-felt-2); white-space: nowrap; }
+@media (max-width: 400px) { .brand { font-size: 18px; } .topnav a { padding: 6px 6px; font-size: 13px; } }
 .topnav a[aria-current="page"] { color: var(--on-felt); background: rgba(255,255,255,0.12); }
 
 /* 패 */
@@ -293,3 +294,29 @@ button.tile[aria-pressed="true"] { transform: translateY(-10px); box-shadow: ins
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* 온라인 */
+.room-code { font-family: var(--display); font-size: 56px; letter-spacing: 0.12em; text-align: center; margin: 10px 0; color: var(--felt); }
+@media (prefers-color-scheme: dark) { .room-code { color: var(--gold); } }
+.field { display: grid; gap: 4px; margin-top: 12px; font-size: 14px; color: var(--ink-2); }
+.field input, .code-input {
+  min-height: 46px; padding: 0 12px; border-radius: var(--radius); border: 1.5px solid var(--line);
+  background: var(--card); color: var(--ink); font: inherit; font-size: 16px;
+}
+.code-input { flex: 1; text-transform: uppercase; letter-spacing: 0.2em; font-weight: 600; min-width: 0; }
+.timer { font-variant-numeric: tabular-nums; color: var(--bad); margin-left: 4px; }
+a.fact.link { text-decoration: none; color: inherit; display: block; }
+a.fact.link:hover { border-color: var(--felt); }
+
+/* 퀴즈 */
+.qmeta { font-size: 13px; color: var(--ink-2); }
+.panel .qtitle { font-family: var(--body); font-weight: 600; font-size: 19px; margin-top: 4px; line-height: 1.4; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
+.chip { font-size: 13px; padding: 3px 10px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); color: var(--ink-2); }
+.quiz .hand { flex-wrap: wrap; }
+.quiz .hand .tile { --w: clamp(20px, calc((100cqi - 30px) / 14.2), 40px); }
+.quiz-hand.done button.tile:disabled { filter: none; }
+.quiz-choose button { border-color: var(--line); color: var(--ink); }
+.quiz-choose button[aria-pressed="true"] { background: var(--felt); border-color: var(--felt); color: #fff; }
+.quiz .yaku li span:first-child { display: inline-flex; align-items: center; gap: 6px; }
+.quiz .yaku .tile { --w: 20px; }
