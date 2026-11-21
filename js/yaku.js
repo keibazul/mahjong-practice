@@ -296,6 +296,7 @@ export function pointLabel(base, dealerWin, tsumo) {
 
 export function limitLabel(r) {
   if (r.yakuman) return r.yakuman > 1 ? `${r.yakuman}배 역만` : '역만';
+  if (r.han >= 13) return '헤아림 역만';
   if (r.han >= 11) return '삼배만';
   if (r.han >= 8) return '배만';
   if (r.han >= 6) return '하네만';
