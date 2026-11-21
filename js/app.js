@@ -536,7 +536,7 @@ async function onEvent(ev, g) {
       if (solo()) { P.resume = null; await showGameEnd(ev.result, g); return; }
       {
         const info = { ai: Object.fromEntries(Object.entries(S.aiDeltas || {}).map(([s, d]) => [s, neutralStrength(d)])) };
-        S.room.broadcast({ t: 'end', result: ev.result, info });
+        S.room.finish({ t: 'end', result: ev.result, info });
         await showOnlineEnd(ev.result, info);
       }
       return;
@@ -790,16 +790,34 @@ async function ensureTransport() {
   const tr = makeTransport();
   setOnline({ busy: '중계 서버에 연결하는 중…', error: '' });
   await tr.connect();
-  tr.onStatus = (st) => { if (st === 'offline') setOnline({ error: '연결이 잠깐 끊겼다. 다시 잇는 중…' }); if (st === 'online') setOnline({ error: '' }); };
+  tr.onStatus = (st) => {
+    if (!O) return;
+    if (st === 'online' && O.host) O.host.heartbeat();
+    if (st === 'offline' && tr.connectedCount() === 0) setOnline({ error: '중계 서버 연결이 끊겼다. 다시 잇는 중…' });
+    if (st === 'online') setOnline({ error: '' });
+  };
   O.tr = tr;
   return tr;
 }
+
+// 방에 있는 동안 화면이 꺼지지 않게 한다 (꺼지면 연결이 끊긴다)
+let wake = null;
+async function keepAwake() {
+  try { if ('wakeLock' in navigator && !wake) { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => { wake = null; }); } } catch { /* 지원 안 함 */ }
+}
+function releaseAwake() { if (wake) { wake.release().catch(() => {}); wake = null; } }
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !O) return;
+  keepAwake();
+  if (O.host) O.host.heartbeat();
+});
 
 async function createRoom(isPublic) {
   const tr = await ensureTransport();
   const code = newRoomCode();
   const host = new HostRoom(tr, { code, isPublic, myId: myClientId(), myName: nick(), onChange: hostChange });
   await host.open();
+  keepAwake();
   setOnline({ role: 'host', host, code, busy: '', error: '' });
   if (isPublic) O.autoTimer = setInterval(() => {
     if (!O || O.host !== host || host.state !== 'waiting') { clearInterval(O && O.autoTimer); return; }
@@ -813,8 +831,9 @@ async function joinRoom(code) {
   setOnline({ busy: `방 ${code}에 들어가는 중…`, error: '' });
   const client = new ClientRoom(tr, { code, myId: myClientId(), myName: nick(), on: { message: clientMessage, hostLost: clientHostLost } });
   try {
-    const w = await client.join();
+    const w = await client.join(20000, (sec, saw) => setOnline({ busy: `방 ${code}의 방장에게 연결하는 중… ${sec}초${saw ? ' (방은 찾았다)' : ''}` }));
     setOnline({ role: 'client', client, code, busy: '', error: '' });
+    keepAwake();
     return w;
   } catch (e) {
     client.stop();
@@ -846,10 +865,12 @@ async function onlineAction(kind) {
     }
     if (kind === 'start' && O && O.role === 'host') startOnlineGame();
     if (kind === 'leave') { leaveOnline(); renderOnline(); }
-    if (kind === 'copy') {
+    if (kind === 'copy' || kind === 'share') {
       const link = `${location.origin}${location.pathname}${location.search}#/online/${O.code}`;
-      if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(link);
-      setOnline({ copied: true });
+      if (kind === 'share' && navigator.share) {
+        try { await navigator.share({ title: '작사 도장 대국 초대', text: `방 코드 ${O.code}`, url: link }); } catch { /* 취소 */ }
+      } else if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(link);
+      setOnline({ copied: kind === 'copy' });
     }
   } catch (e) {
     setOnline({ busy: '', error: e.message || String(e) });
@@ -857,6 +878,7 @@ async function onlineAction(kind) {
 }
 
 function leaveOnline() {
+  releaseAwake();
   if (!O) return;
   clearInterval(O.autoTimer);
   if (O.role === 'host' && O.host) O.host.close();
@@ -909,6 +931,7 @@ function startOnlineGame() {
     msg: { tone: '', text: `방 ${room.code} 대국 시작. 빈자리는 강도를 알 수 없는 AI가 앉았다.` },
   });
   room.broadcast({ t: 'start', names, code: room.code, rounds: P.settings.rounds });
+  keepAwake();
   location.hash = '#/play';
   renderTable();
   runGame(game);
@@ -920,6 +943,8 @@ function clientMessage(m) {
   switch (m.t) {
     case 'room':
       O.info = m;
+      if (m.state === 'playing' && !(S && S.mode === 'client' && S.code === m.code && !S.over)) O.client.rejoin();
+      if (m.state === 'ended' && S && S.mode === 'client' && !S.over) O.client.rejoin();
       if (current().startsWith('online')) renderOnline();
       break;
     case 'closed':
@@ -944,11 +969,15 @@ function clientMessage(m) {
     case 'ask': {
       if (!S || S.mode !== 'client') break;
       if (S.pending && S.pending.req === m.req) break; // 다시 보낸 질문
+      if (S.answered && S.answered.req === m.req) { O.client.answer(m.req, S.answered.act); break; } // 답이 사라졌다
       S.view = m.view;
       S.sel = null;
       S.riichiMode = false;
       const req = m.req;
-      S.pending = { kind: m.kind, view: m.view, opt: m.opt, req, deadline: Date.now() + m.timeout, resolve: (act) => O && O.client && O.client.answer(req, act) };
+      S.pending = {
+        kind: m.kind, view: m.view, opt: m.opt, req, deadline: Date.now() + m.timeout,
+        resolve: (act) => { if (S) S.answered = { req, act }; if (O && O.client) O.client.answer(req, act); },
+      };
       const p = S.pending;
       if (m.kind === 'turn') {
         prepareTurn();
@@ -975,7 +1004,9 @@ function clientMessage(m) {
       showExhaustive(m.draw).then(() => { if (O && O.client) O.client.readyFor(m.rid); });
       break;
     case 'end':
-      if (!S || S.mode !== 'client') break;
+      if (O && O.client) O.client.gotEnd();
+      if (!S || S.mode !== 'client' || S.endShown) break;
+      S.endShown = true;
       S.over = true;
       S.pending = null;
       if (S.sheetDone) { const d = S.sheetDone; S.sheetDone = null; closeSheet(); d(); }
@@ -1027,7 +1058,8 @@ function renderOnline(codeFromHash) {
     const left = h.isPublic ? Math.max(0, Math.ceil((h.startAt - Date.now()) / 1000)) : 0;
     body = `<p class="lead">${h.isPublic ? '빠른 대국 방이다. 사람이 더 오길 기다린다.' : '친구에게 방 코드나 링크를 보내라.'}</p>
       <p class="room-code" aria-label="방 코드">${h.code}</p>
-      ${h.isPublic ? '' : `<div class="row"><button type="button" class="btn" data-on="copy">${st.copied ? '링크 복사됨' : '초대 링크 복사'}</button></div>`}
+      ${h.isPublic ? '' : `<div class="row">${navigator.share ? '<button type="button" class="btn" data-on="share">초대 보내기</button>' : ''}<button type="button" class="btn" data-on="copy">${st.copied ? '링크 복사됨' : '초대 링크 복사'}</button></div>`}
+      <p class="note warn-box">방장 폰이 대국을 진행한다. 초대를 보낸 뒤에는 이 화면으로 돌아와 켜 둬라. 다른 앱에 가 있거나 화면이 꺼지면 친구가 들어오지 못한다.</p>
       <ul class="list">${seatRows(h.roomInfo().seats, 0)}</ul>
       <div class="row block"><button type="button" class="btn primary" data-on="start">지금 시작 (빈자리는 AI)</button><button type="button" class="btn" data-on="leave">방 닫기</button></div>
       ${h.isPublic ? `<p class="note">${left}초 뒤 자동으로 시작한다. 4명이 모이면 바로 시작한다.</p>` : ''}`;
@@ -1048,6 +1080,7 @@ function renderOnline(codeFromHash) {
     <h2>온라인 대국</h2>
     ${body}
     ${st.busy ? `<p class="note" aria-live="polite">${st.busy}</p>` : ''}
+    ${st.tr && st.tr.broker ? `<p class="note">중계: ${st.tr.broker}${st.tr.failed && st.tr.failed.length ? ` · 연결 안 됨: ${st.tr.failed.join(', ')}` : ''}</p>` : ''}
     <p class="err" aria-live="polite">${st.error || ''}</p>
   </section>`;
 }

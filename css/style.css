@@ -320,3 +320,4 @@ a.fact.link:hover { border-color: var(--felt); }
 .quiz-choose button[aria-pressed="true"] { background: var(--felt); border-color: var(--felt); color: #fff; }
 .quiz .yaku li span:first-child { display: inline-flex; align-items: center; gap: 6px; }
 .quiz .yaku .tile { --w: 20px; }
+.warn-box { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--gold); padding: 10px 12px; border-radius: 0; color: var(--ink); }

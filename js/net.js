@@ -70,13 +70,27 @@ async function loadMqtt() {
 class BaseTransport {
   constructor() {
     this.subs = [];
+    this.seen = new Map(); // 같은 메시지가 두 서버로 두 번 오면 한 번만 처리
     this.onStatus = () => {};
   }
 
   deliver(topic, text) {
     let msg = null;
-    if (text) { try { msg = JSON.parse(text); } catch { return; } }
+    if (text) {
+      try { msg = JSON.parse(text); } catch { return; }
+      if (msg && msg._m) {
+        const now = Date.now();
+        if (this.seen.has(msg._m)) return;
+        this.seen.set(msg._m, now);
+        if (this.seen.size > 600) for (const [k, t] of this.seen) if (now - t > 15000) this.seen.delete(k);
+      }
+    }
     for (const s of this.subs.slice()) if (matchTopic(s.filter, topic)) s.handler(msg, topic);
+  }
+
+  encode(msg) {
+    if (msg === null) return '';
+    return JSON.stringify({ ...msg, _m: rid(10) });
   }
 
   subscribe(filter, handler) {
@@ -90,99 +104,112 @@ class BaseTransport {
   }
 }
 
-// 실제 서비스: 공개 MQTT 서버
+const brokerName = (url) => url.replace(/^wss:\/\//, '').split(/[.:]/).slice(0, 2).filter((x) => x !== 'broker').join('.') || url;
+
+// 실제 서비스: 공개 MQTT 서버 여러 곳에 동시에 붙는다.
+// 한쪽이 막히거나 메시지를 흘려도 다른 쪽으로 오가고, 같은 메시지는 한 번만 처리한다.
 export class MqttTransport extends BaseTransport {
-  async connect({ will } = {}) {
+  async connect() {
     const mqtt = await loadMqtt();
-    let lastErr = null;
-    for (const url of BROKERS) {
-      try {
-        await this.tryConnect(mqtt, url, will);
-        this.broker = url;
-        return url;
-      } catch (e) { lastErr = e; }
+    const results = await Promise.allSettled(BROKERS.map((url) => this.tryConnect(mqtt, url)));
+    this.clients = results.filter((r) => r.status === 'fulfilled').map((r) => r.value);
+    this.failed = BROKERS.filter((_, i) => results[i].status !== 'fulfilled').map(brokerName);
+    if (!this.clients.length) {
+      const why = results.map((r) => (r.reason && r.reason.message) || '').filter(Boolean).join(', ');
+      throw new Error(`중계 서버에 연결하지 못했다 (${why || '알 수 없음'}). 와이파이·데이터를 바꿔 다시 해 봐라.`);
     }
-    throw new Error(`중계 서버에 연결하지 못했다 (${lastErr ? lastErr.message : '알 수 없음'})`);
+    this.broker = this.clients.map((c) => c.name).join(' · ');
+    return this.broker;
   }
 
-  tryConnect(mqtt, url, will) {
+  tryConnect(mqtt, url) {
     return new Promise((resolve, reject) => {
       const client = mqtt.connect(url, {
         clientId: `jd_${rid(12)}`,
         clean: true,
-        keepalive: 30,
-        reconnectPeriod: 2000,
+        keepalive: 20,
+        reconnectPeriod: 1500,
         connectTimeout: 8000,
         protocolVersion: 4,
-        will: will ? { topic: will.topic, payload: will.payload, qos: 0, retain: Boolean(will.retain) } : undefined,
       });
-      const timer = setTimeout(() => { client.end(true); reject(new Error('시간 초과')); }, 9000);
+      client.name = brokerName(url);
+      const timer = setTimeout(() => { client.end(true); reject(new Error(`${client.name} 시간 초과`)); }, 9000);
       client.once('connect', () => {
         clearTimeout(timer);
-        this.client = client;
         client.on('message', (topic, payload) => {
           const text = typeof payload === 'string' ? payload : new TextDecoder().decode(payload);
           this.deliver(topic, text);
         });
-        client.on('offline', () => this.onStatus('offline'));
-        client.on('reconnect', () => this.onStatus('reconnect'));
-        client.on('connect', () => this.onStatus('online'));
-        resolve();
+        client.on('offline', () => this.onStatus('offline', client.name));
+        client.on('connect', () => this.onStatus('online', client.name));
+        resolve(client);
       });
-      client.once('error', (e) => { clearTimeout(timer); client.end(true); reject(e); });
+      client.once('error', (e) => { clearTimeout(timer); client.end(true); reject(new Error(`${client.name} ${e.message || e}`)); });
     });
   }
 
-  rawSubscribe(filter) { this.client.subscribe(filter, { qos: 1 }); }
-  rawUnsubscribe(filter) { this.client.unsubscribe(filter); }
+  connectedCount() { return (this.clients || []).filter((c) => c.connected).length; }
+
+  rawSubscribe(filter) { for (const c of this.clients || []) c.subscribe(filter, { qos: 1 }); }
+  rawUnsubscribe(filter) { for (const c of this.clients || []) c.unsubscribe(filter); }
 
   publish(topic, msg, { retain = false, qos = 0 } = {}) {
-    if (!this.client) return;
-    this.client.publish(topic, msg === null ? '' : JSON.stringify(msg), { qos, retain });
+    const text = this.encode(msg);
+    for (const c of this.clients || []) c.publish(topic, text, { qos, retain });
   }
 
-  end() { if (this.client) this.client.end(true); this.client = null; }
+  end() {
+    for (const c of this.clients || []) c.end(true);
+    this.clients = [];
+  }
 }
 
 // 시험용: 같은 브라우저의 여러 탭끼리 (주소에 ?net=local)
+// &drop=0.2 는 메시지 20%를 버리고, &lag=300 은 구독이 300ms 늦게 걸리게 해서 실제 서버의 나쁜 상황을 흉내 낸다
 export class LocalTransport extends BaseTransport {
-  async connect({ will } = {}) {
+  async connect() {
+    const q = new URLSearchParams(location.search);
+    this.dropRate = Number(q.get('drop') || 0);
+    this.lag = Number(q.get('lag') || 0);
     this.ch = new BroadcastChannel('jaksa-local-mqtt');
-    this.ch.onmessage = (e) => this.deliver(e.data.topic, e.data.text);
-    this.will = will;
-    this.onHide = () => { if (this.will) this.publishText(this.will.topic, this.will.payload, this.will.retain); };
-    window.addEventListener('pagehide', this.onHide);
-    this.broker = 'local';
-    return 'local';
+    this.active = new Set();
+    this.ch.onmessage = (e) => this.receive(e.data.topic, e.data.text);
+    this.broker = this.dropRate || this.lag ? `local (drop ${this.dropRate}, lag ${this.lag})` : 'local';
+    return this.broker;
+  }
+
+  connectedCount() { return 1; }
+
+  receive(topic, text) {
+    if (![...this.active].some((f) => matchTopic(f, topic))) return;
+    if (text && this.dropRate && Math.random() < this.dropRate) return;
+    this.deliver(topic, text);
   }
 
   rawSubscribe(filter) {
-    const hits = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith('jl-retain:') && matchTopic(filter, k.slice(10))) hits.push([k.slice(10), localStorage.getItem(k)]);
-    }
-    setTimeout(() => { for (const [t, text] of hits) this.deliver(t, text); }, 0);
+    setTimeout(() => {
+      this.active.add(filter);
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('jl-retain:') && matchTopic(filter, k.slice(10))) this.deliver(k.slice(10), localStorage.getItem(k));
+      }
+    }, this.lag);
   }
 
-  rawUnsubscribe() {}
+  rawUnsubscribe(filter) { this.active.delete(filter); }
 
-  publishText(topic, text, retain) {
+  publish(topic, msg, { retain = false } = {}) {
+    if (!this.ch) return;
+    const text = this.encode(msg);
     if (retain) {
       if (text) localStorage.setItem(`jl-retain:${topic}`, text);
       else localStorage.removeItem(`jl-retain:${topic}`);
     }
     this.ch.postMessage({ topic, text });
-    setTimeout(() => this.deliver(topic, text), 0);
-  }
-
-  publish(topic, msg, { retain = false } = {}) {
-    if (!this.ch) return;
-    this.publishText(topic, msg === null ? '' : JSON.stringify(msg), retain);
+    setTimeout(() => this.receive(topic, text), 0);
   }
 
   end() {
-    window.removeEventListener('pagehide', this.onHide);
     if (this.ch) this.ch.close();
     this.ch = null;
   }
@@ -283,6 +310,7 @@ export class HostRoom {
           s.name = name;
           this.send(m.id, { t: 'welcome', seat: i, code: this.code, state: this.state });
           if (this.state === 'playing') this.onChange('rejoin', i);
+          if (this.state === 'ended' && this.lastEnd) this.send(m.id, this.lastEnd);
           this.resendAsk(i);
         } else if (this.state !== 'waiting') {
           this.send(m.id, { t: 'reject', reason: 'started' });
@@ -310,6 +338,10 @@ export class HostRoom {
           this.onChange('rejoin', i);
         }
         if (i >= 0) this.resendAsk(i);
+        if (i >= 0 && this.state === 'ended' && this.lastEnd && !this.endAck.has(i)) this.send(m.id, this.lastEnd);
+        break;
+      case 'gotEnd':
+        if (i >= 0 && this.endAck) this.endAck.add(i);
         break;
       case 'answer': {
         const p = this.pending.get(i);
@@ -404,6 +436,15 @@ export class HostRoom {
     for (const i of this.remoteSeats()) this.forward(i, msg);
   }
 
+  // 대국 종료: 못 받은 사람에게는 신호가 올 때마다 다시 보낸다
+  finish(msg) {
+    this.state = 'ended';
+    this.lastEnd = msg;
+    this.endAck = new Set();
+    for (const i of this.remoteSeats()) if (this.seats[i].connected) this.send(this.seats[i].id, msg);
+    this.heartbeat();
+  }
+
   close() {
     clearInterval(this.beat);
     this.tr.publish(topics.all(this.code), { t: 'closed' });
@@ -451,36 +492,64 @@ export class ClientRoom {
     this.seat = -1;
   }
 
-  join(timeoutMs = 6000) {
+  join(timeoutMs = 20000, onProgress = () => {}) {
     return new Promise((resolve, reject) => {
+      let settled = false;
+      let sawRoom = false;
+      const started = Date.now();
+      const finish = (fn, v) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearInterval(retry);
+        fn(v);
+      };
       const handle = (m) => {
         if (!m) return;
         this.lastHost = Date.now();
         if (m.t === 'welcome') {
-          this.seat = m.seat;
-          clearTimeout(timer);
-          resolve(m);
+          if (this.seat < 0 || this.seat === m.seat) this.seat = m.seat;
+          if (!settled) {
+            this.pinger = setInterval(() => {
+              this.tr.publish(topics.host(this.code), { t: 'ping', id: this.id });
+              if (Date.now() - this.lastHost > LOST_MS) this.on.hostLost();
+            }, 4000);
+          }
+          finish(resolve, m);
         } else if (m.t === 'reject') {
-          clearTimeout(timer);
-          reject(new Error(m.reason === 'full' ? '방이 꽉 찼다' : '이미 대국이 시작된 방이다'));
-        } else this.on.message(m);
+          finish(reject, new Error(m.reason === 'full' ? '방이 꽉 찼다.' : '이미 대국이 시작된 방이다.'));
+        } else if (settled) this.on.message(m);
       };
       this.unsubs = [
         this.tr.subscribe(topics.to(this.code, this.id), handle),
         this.tr.subscribe(topics.all(this.code), (m) => {
           if (!m) return;
           this.lastHost = Date.now();
-          this.on.message(m);
+          if (m.t === 'room') sawRoom = true;
+          if (settled) this.on.message(m);
         }),
       ];
-      const timer = setTimeout(() => reject(new Error('방을 찾지 못했다. 코드를 확인해라')), timeoutMs);
-      this.tr.publish(topics.host(this.code), { t: 'join', id: this.id, name: this.name }, { qos: 1 });
-      this.pinger = setInterval(() => {
-        this.tr.publish(topics.host(this.code), { t: 'ping', id: this.id });
-        if (Date.now() - this.lastHost > LOST_MS) this.on.hostLost();
-      }, 4000);
+      const send = () => {
+        this.tr.publish(topics.host(this.code), { t: 'join', id: this.id, name: this.name }, { qos: 1 });
+        onProgress(Math.round((Date.now() - started) / 1000), sawRoom);
+      };
+      setTimeout(send, 300); // 구독이 걸릴 틈을 준다
+      const retry = setInterval(send, 2000);
+      const timer = setTimeout(() => finish(reject, new Error(sawRoom
+        ? '방은 찾았는데 방장이 응답하지 않는다. 방장 폰 화면이 켜져 있고 이 방 화면에 있는지 확인해라.'
+        : '방을 찾지 못했다. 코드가 맞는지, 방장이 방 화면을 켜 두고 있는지 확인해라. 방장이 다른 앱에 가 있으면 연결이 끊긴다.')), timeoutMs);
     });
   }
+
+  // 대국이 이미 진행 중인데 시작 신호를 놓쳤을 때 다시 붙는다
+  rejoin() {
+    const now = Date.now();
+    if (this.lastRejoin && now - this.lastRejoin < 3000) return;
+    this.lastRejoin = now;
+    this.tr.publish(topics.host(this.code), { t: 'join', id: this.id, name: this.name }, { qos: 1 });
+  }
+
+  gotEnd() { this.tr.publish(topics.host(this.code), { t: 'gotEnd', id: this.id }, { qos: 1 }); }
 
   answer(req, act) { this.tr.publish(topics.host(this.code), { t: 'answer', id: this.id, req, act }, { qos: 1 }); }
   readyFor(r) { this.tr.publish(topics.host(this.code), { t: 'ready', id: this.id, rid: r }, { qos: 1 }); }
