@@ -273,7 +273,7 @@ function prepareTurn() {
   if (an.riichiThreat && an.minSh >= 1 && rnd() < askProb(P, 'defense')) {
     S.ask = 'defense';
     say('', pickLine(LINES.defAsk));
-  } else if (!an.riichiThreat && an.minSh <= 2) {
+  } else if (!an.riichiThreat && an.yakuSecured && an.minSh <= 2) {
     const same = an.cands.filter((x) => x.shanten === an.minSh);
     const best = Math.max(...same.map((x) => x.accept));
     if (same.some((x) => x.accept < best * 0.85) && rnd() < askProb(P, 'efficiency')) {

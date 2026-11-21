@@ -187,6 +187,23 @@ function waitQuality(c, vis, ownSet, view, closedHand, meldObjs) {
   return { count: furiten ? count * 0.3 : count, kinds, furiten };
 }
 
+// 울은 손에 역이 확정됐는지: 역패 울음·역패 커쯔, 또는 한 장만 정리하면 되는 탕야오·혼일색
+export function hasSecuredYaku(c, view, meldKinds) {
+  for (const m of view.melds[view.seat]) {
+    const k = kindOf(m.tiles[0]);
+    if (m.type !== 'chi' && isYakuhai(k, view)) return true;
+  }
+  for (let k = 27; k < 34; k++) if (c[k] >= 3 && isYakuhai(k, view)) return true;
+  if (meldKinds.every(isSimple) && c.reduce((a, n, t) => a + (isSimple(t) ? 0 : n), 0) <= 1) return true;
+  const all = c.slice();
+  for (const k of meldKinds) all[k] += 1;
+  const suits = [0, 9, 18].map((b) => all.slice(b, b + 9).reduce((a, x) => a + x, 0));
+  const main = suits.indexOf(Math.max(...suits));
+  const meldOff = meldKinds.some((k) => k < 27 && Math.floor(k / 9) !== main);
+  const handOff = c.reduce((a, n, t) => a + (t < 27 && Math.floor(t / 9) !== main ? n : 0), 0);
+  return !meldOff && handOff <= 1;
+}
+
 export function analyzeDiscards(view, opt = {}) {
   const c = countsOf(view.hand);
   const closedHand = view.melds[view.seat].every((m) => m.type === 'ankan');
@@ -292,7 +309,8 @@ export function analyzeDiscards(view, opt = {}) {
       Math.max(-1.5, (x.value - maxVal) / 2) * atk,
     ];
   }
-  return { cands, minSh, maxAcc, maxEff, maxVal, fold, threat, riichiThreat, per, vis, closedHand };
+  const yakuSecured = closedHand || hasSecuredYaku(c, view, meldKinds);
+  return { cands, minSh, maxAcc, maxEff, maxVal, fold, threat, riichiThreat, per, vis, closedHand, yakuSecured };
 }
 
 export const dot = (w, f) => w.reduce((s, x, i) => s + x * f[i], 0);

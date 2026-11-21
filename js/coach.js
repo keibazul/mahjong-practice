@@ -15,7 +15,8 @@ export function askProb(profile, skill) {
 
 // ---- 패효율 채점 (위협이 없을 때) ----
 export function judgeEfficiency(an, chosen) {
-  if (an.riichiThreat || an.minSh > 3) return null;
+  // 울은 손에 역이 확정되지 않았으면 역패를 남기는 판단이 옳을 수 있어 효율로 채점하지 않는다
+  if (an.riichiThreat || an.minSh > 3 || !an.yakuSecured) return null;
   const same = an.cands.filter((x) => x.shanten === an.minSh);
   const bestAcc = Math.max(...same.map((x) => x.accept));
   const spread = same.some((x) => x.accept < bestAcc * 0.85);
